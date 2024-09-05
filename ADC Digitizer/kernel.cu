@@ -63,7 +63,7 @@ __global__ void summationKernel(const float* data, int size, float* result) {
 int main() {
 
     // Generate random data
-    const int n = 10000000000000;    
+    const int n = 1000000;    
     float* inputArray = generateData(n);
     size_t size = n * sizeof(float);
 
