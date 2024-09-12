@@ -1,17 +1,16 @@
-﻿#include "cuda_runtime.h"
+#include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <windows.h>
 #include <time.h>
 
+
 #include <stdio.h>
 #include <stdlib.h>
 
-
 #define BLOCK_SIZE 512
 
-/*
-* Generate random float numbers
-*/
+
+// Generate random float numbers
 float* generateData(int n) {
     float* darr = (float*)malloc(sizeof(float) * n);
 
@@ -23,89 +22,199 @@ float* generateData(int n) {
     return darr;
 }
 
-/*
-* Summation Kernel
-*/
-__global__ void summationKernel(const float* data, int size, float* result) {
-    __shared__ float shared_data[BLOCK_SIZE];
+
+__global__ void subtractionKernel(const float* data, int size, float* result) {
+    __shared__ float shared_data_sub[BLOCK_SIZE];
     int tid = threadIdx.x;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     // Load data into shared memory
     if (i + 3 < size) {
-        shared_data[tid] = (data[i] - data[i + 2]) * (data[i + 1] - data[i + 3]);
+        shared_data_sub[tid] = (data[i] - data[i + 2]);
     }
     else {
-        shared_data[tid] = 0.0f;
+        shared_data_sub[tid] = 0.0f;
     }
-
-    //shared_data[tid] = (data[i] - data[i + 2]) * (data[i + 1] - data[i + 3]);
 
     __syncthreads();
 
-    // Perform warp-level reduction
+    // Warp-level reduction
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
-            shared_data[tid] += shared_data[tid + s];
+            shared_data_sub[tid] += shared_data_sub[tid + s];
         }
         __syncthreads();
     }
 
     // Write the result for each block to global memory
     if (tid == 0) {
-        result[blockIdx.x] = shared_data[0];
+        result[blockIdx.x] = shared_data_sub[0];
+    }
+
+}__global__ void multiplicationKernel(const float* data, int size, float* result) {
+    __shared__ float shared_data_mult[BLOCK_SIZE];
+    int tid = threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Load data into shared memory
+    if (i + 3 < size) {
+        shared_data_mult[tid] = (data[i] - data[i + 2]) * (data[i + 1] - data[i + 3]);
+    }
+    else {
+        shared_data_mult[tid] = 0.0f;
+    }
+
+    __syncthreads();
+
+    // Warp-level reduction
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            shared_data_mult[tid] += shared_data_mult[tid + s];
+        }
+        __syncthreads();
+    }
+
+    // Write the result for each block to global memory
+    if (tid == 0) {
+        result[blockIdx.x] = shared_data_mult[0];
     }
 }
 
-/*
-* Main program
-*/
+__global__ void summationKernel(const float* data, int size, float* result) {
+    __shared__ float shared_data_sum[BLOCK_SIZE];
+    int tid = threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Load data into shared memory
+    if (i + 3 < size) {
+        shared_data_sum[tid] = (data[i] - data[i + 2]) * (data[i + 1] - data[i + 3]);
+    }
+    else {
+        shared_data_sum[tid] = 0.0f;
+    }
+
+    __syncthreads();
+
+    // Warp-level reduction
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            shared_data_sum[tid] += shared_data_sum[tid + s];
+        }
+        __syncthreads();
+    }
+
+    // Write the result for each block to global memory
+    if (tid == 0) {
+        result[blockIdx.x] = shared_data_sum[0];
+    }
+}
+
+
+
 int main() {
 
     // Generate random data
-    const int n = 1000000;    
+    const int n = 1000000;
     float* inputArray = generateData(n);
     size_t size = n * sizeof(float);
 
     // Calculate total blocks
-    int blocks = (n / 2 + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    //int blocks = 256;
+    int blocks_sum = (n / 2 + BLOCK_SIZE - 1) / BLOCK_SIZE / 3;
+    int blocks_sub = (n / 2 + BLOCK_SIZE - 1) / BLOCK_SIZE / 3;
+    int blocks_mult = (n / 2 + BLOCK_SIZE - 1) / BLOCK_SIZE / 3;
 
     // Allocate GPU memory
-    float* d_input, * d_output;
-    cudaMalloc((void**)&d_input, size);
-    cudaMalloc((void**)&d_output, blocks * sizeof(float));
+    float* d_input_sum, * d_output_sum, * d_input_sub, * d_output_sub, * d_input_mult, * d_output_mult;
+    cudaMalloc((void**)&d_input_sum, size);
+    cudaMalloc((void**)&d_output_sum, blocks_sum * sizeof(float));
 
-    // Copy data to device
-    cudaMemcpy(d_input, inputArray, size , cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_input_sub, size);
+    cudaMalloc((void**)&d_output_sub, blocks_sum * sizeof(float));
+
+    cudaMalloc((void**)&d_input_mult, size);
+    cudaMalloc((void**)&d_output_mult, blocks_sum * sizeof(float));
 
     // Calculate the time
-    clock_t t;
-    t = clock();
+    cudaEvent_t start_sum, stop_sum, start_mult, stop_mult, start_sub, stop_sub;
+    cudaEventCreate(&start_sum);
+    cudaEventCreate(&stop_sum);
+
+    cudaEventCreate(&start_sub);
+    cudaEventCreate(&stop_sub);
+
+    cudaEventCreate(&start_mult);
+    cudaEventCreate(&stop_mult);
+
+    // Copy data to device
+    cudaMemcpy(d_input_sum, inputArray, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_input_sub, inputArray, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_input_mult, inputArray, size, cudaMemcpyHostToDevice);
 
     // Launch the kernel
-    summationKernel <<<blocks, BLOCK_SIZE >>> (d_input, size, d_output);
+    cudaEventRecord(start_sum);
+    summationKernel <<<blocks_sum, BLOCK_SIZE>>> (d_input_sum, size, d_output_sum);
+    cudaEventRecord(stop_sum);
+
+    cudaEventRecord(start_sub);
+    subtractionKernel <<<blocks_sub, BLOCK_SIZE >>> (d_input_sub, size, d_output_sub);
+    cudaEventRecord(stop_sub);
+
+    cudaEventRecord(start_mult);
+    multiplicationKernel <<<blocks_mult, BLOCK_SIZE >>> (d_input_mult, size, d_output_mult);
+    cudaEventRecord(stop_mult);
+
 
     // Copy the result from device to host
-    float* result = (float*)malloc(blocks * sizeof(float));
-    cudaMemcpy(result, d_output, blocks * sizeof(float), cudaMemcpyDeviceToHost);
+    float* result_sum = (float*)malloc(blocks_sum * sizeof(float));
+    float* result_sub = (float*)malloc(blocks_sub * sizeof(float));
+    float* result_mult = (float*)malloc(blocks_mult * sizeof(float));
+
+    cudaMemcpy(result_sum, d_output_sum, blocks_sum * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(result_sub, d_output_sub, blocks_sub * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(result_mult, d_output_mult, blocks_mult * sizeof(float), cudaMemcpyDeviceToHost);
+
+    cudaEventSynchronize(stop_sum);
+    cudaEventSynchronize(stop_sub);
+    cudaEventSynchronize(stop_mult);
+
+
+    float milliseconds_sum = 0;
+    float milliseconds_sub = 0;
+    float milliseconds_mult = 0;
+    float milliseconds_total = 0;
+
+    cudaEventElapsedTime(&milliseconds_sum, start_sum, stop_sum);
+    cudaEventElapsedTime(&milliseconds_sub, start_sub, stop_sub);
+    cudaEventElapsedTime(&milliseconds_mult, start_mult, stop_mult);
+
+    milliseconds_total = milliseconds_sum + milliseconds_sub + milliseconds_mult;
 
     // Sum the partial results from each block
     float final_result = 0.0f;
-    for (int i = 0; i < blocks; i++) {
-        final_result += result[i];
+    for (int i = 0; i < blocks_sum; i++) {
+        final_result += result_sum[i];
     }
+    // Print time taken for each kernel
+    printf("Summation took %f milliseconds to execute \n", milliseconds_sum);
+    printf("Subtraction took %f milliseconds to execute \n", milliseconds_sub);
+    printf("Multiplication took %f milliseconds to execute \n", milliseconds_mult);
+    printf("All 3 kernels took %f milliseconds to execute \n", milliseconds_total);
 
-    t = clock() - t; // End the clock
-    double time_taken = ((double)t) / CLOCKS_PER_SEC * 1000; // Convert to seconds
-    printf("fun() took %f milliseconds to execute \n", time_taken);
 
     printf("Final result: %f\n", final_result);
 
     // Free device memory
-    cudaFree(d_input);
-    cudaFree(d_output);
-    free(result);
+    cudaFree(d_input_sum);
+    cudaFree(d_output_sum);
+    free(result_sum);
+
+    cudaFree(d_input_sub);
+    cudaFree(d_output_sub);
+    free(result_sub);
+
+    cudaFree(d_input_mult);
+    cudaFree(d_output_mult);
+    free(result_mult);
 
     return 0;
 }
